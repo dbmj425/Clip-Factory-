@@ -27,10 +27,60 @@ function esc(s=''){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt
 function addCreator(){let name=document.getElementById('creatorName').value.trim();if(!name)return toast('Enter a streamer name first.');let url=document.getElementById('creatorUrl').value.trim();if(url&&!/^https:\/\//i.test(url))return toast('Use a valid https channel URL.');creators.push({id:crypto.randomUUID(),name,platform:document.getElementById('creatorPlatform').value,url,permission:document.getElementById('creatorPermission').value,favorite:false});document.getElementById('creatorName').value='';document.getElementById('creatorUrl').value='';persist();toast('Streamer added.')}
 function toggleFavorite(id){let c=creators.find(x=>x.id===id);if(c){c.favorite=!c.favorite;persist();}}
 function removeCreator(id){creators=creators.filter(x=>x.id!==id);persist()}
-function creatorName(id){return creators.find(c=>c.id===id)?.name||'Manual upload'}
+
+const videoUrls={};
+async function getVideoUrl(id){
+ if(!id)return '';
+ if(videoUrls[id])return videoUrls[id];
+ try{
+  let db=await openDB();
+  let blob=await new Promise((res,rej)=>{
+   let tx=db.transaction(STORE,'readonly');
+   let r=tx.objectStore(STORE).get(id);
+   r.onsuccess=()=>res(r.result);
+   r.onerror=()=>rej(r.error);
+  });
+  db.close();
+  if(blob){
+   videoUrls[id]=URL.createObjectURL(blob);
+   return videoUrls[id];
+  }
+ }catch(e){}
+ return '';
+}
+async function clipCard(c){
+ let src=c.videoId?await getVideoUrl(c.videoId):'';
+ return `<article class="card clip">
+ <div class="thumb">
+ ${src?`<video controls playsinline preload="metadata" src="${src}"></video>`:'<span class="muted">Video preview unavailable</span>'}
+ <span class="duration">${esc(c.status)}</span>
+ </div>
+ <div class="clipbody">
+ <div class="cliptitle">${esc(c.title)}</div>
+ <div class="muted">${esc(creatorName(c.creatorId))} · ${esc(c.platform||'Local upload')}</div>
+ ${c.notes?`<p class="muted">${esc(c.notes)}</p>`:''}
+ <div class="actions">
+ ${c.status==='Needs approval'?`<button class="btn good" onclick="approve('${c.id}')">Approve</button><button class="btn danger" onclick="reject('${c.id}')">Reject</button>`:`<span class="tag green">${esc(c.status)}</span>`}
+ </div>
+ </div>
+ </article>`;
+}
 function renderCreatorRow(c){let p={confirmed:'Permission confirmed',requested:'Permission requested',research:'Not confirmed — research only'}[c.permission];return `<div class="streamrow"><div class="creator"><div class="avatar">${esc(c.name[0]?.toUpperCase()||'?')}</div><div><b>${esc(c.name)}</b><div class="muted">${esc(c.platform)} · ${p}</div>${c.url?`<a class="creator-link small" href="${esc(c.url)}" target="_blank" rel="noopener">Open channel ↗</a>`:''}</div></div><div class="actions"><button class="btn" onclick="toggleFavorite('${c.id}')">${c.favorite?'★ Favorited':'☆ Favorite'}</button><button class="btn danger" onclick="removeCreator('${c.id}')">Remove</button></div></div>`}
 function clipCard(c){return `<article class="card clip"><div class="thumb">${c.videoId?'<span class="muted">Video saved on this device</span>':'<span class="muted">Video preview pending</span>'}<span class="duration">${esc(c.status)}</span></div><div class="clipbody"><div class="cliptitle">${esc(c.title)}</div><div class="muted">${esc(creatorName(c.creatorId))} · ${esc(c.platform||'Local upload')}</div>${c.notes?`<p class="muted">${esc(c.notes)}</p>`:''}<div class="actions">${c.status==='Needs approval'?`<button class="btn good" onclick="approve('${c.id}')">Approve</button><button class="btn danger" onclick="reject('${c.id}')">Reject</button>`:`<span class="tag green">${esc(c.status)}</span>`}</div></div></article>`}
-function render(){let pending=clips.filter(c=>c.status==='Needs approval');document.getElementById('metricClips').textContent=clips.length;document.getElementById('metricQueue').textContent=pending.length;document.getElementById('metricFavorites').textContent=creators.filter(c=>c.favorite).length;document.getElementById('navQueue').textContent=pending.length?`(${pending.length})`:'';document.getElementById('overviewClips').innerHTML=pending.slice(0,3).map(clipCard).join('')||'<div class="empty">No clips yet. Add a video to test your approval workflow.</div>';document.getElementById('allClips').innerHTML=clips.map(clipCard).join('')||'<div class="empty">Your library is empty. Add a video to get started.</div>';document.getElementById('queueClips').innerHTML=pending.map(clipCard).join('')||'<div class="empty">Your approval queue is clear.</div>';document.getElementById('streamList').innerHTML=creators.map(renderCreatorRow).join('')||'<div class="empty">No streamers yet. Add your first creator below.</div>';document.getElementById('favoriteList').innerHTML=creators.filter(c=>c.favorite).map(renderCreatorRow).join('')||'<div class="empty">No favorites yet. Open Streamers and tap Favorite on a creator.</div>';document.getElementById('videoCreator').innerHTML='<option value="">Manual upload</option>'+creators.map(c=>`<option value="${c.id}">${esc(c.name)} (${esc(c.platform)})</option>`).join('')}
+
+async function render(){
+let pending=clips.filter(c=>c.status==='Needs approval');
+document.getElementById('metricClips').textContent=clips.length;
+document.getElementById('metricQueue').textContent=pending.length;
+document.getElementById('metricFavorites').textContent=creators.filter(c=>c.favorite).length;
+document.getElementById('navQueue').textContent=pending.length?`(${pending.length})`:'';
+document.getElementById('overviewClips').innerHTML=(await Promise.all(pending.slice(0,3).map(clipCard))).join('')||'<div class="empty">No clips yet. Add a video to test your approval workflow.</div>';
+document.getElementById('allClips').innerHTML=(await Promise.all(clips.map(clipCard))).join('')||'<div class="empty">Your library is empty. Add a video to get started.</div>';
+document.getElementById('queueClips').innerHTML=(await Promise.all(pending.map(clipCard))).join('')||'<div class="empty">Your approval queue is clear.</div>';
+document.getElementById('streamList').innerHTML=creators.map(renderCreatorRow).join('')||'<div class="empty">No streamers yet. Add your first creator below.</div>';
+document.getElementById('favoriteList').innerHTML=creators.filter(c=>c.favorite).map(renderCreatorRow).join('')||'<div class="empty">No favorites yet. Open Streamers and tap Favorite on a creator.</div>';
+document.getElementById('videoCreator').innerHTML='<option value="">Manual upload</option>'+creators.map(c=>`<option value="${c.id}">${esc(c.name)} (${esc(c.platform)})</option>`).join('');
+}
 function approve(id){let c=clips.find(x=>x.id===id);if(c){c.status='Approved — ready to publish';persist();toast('Approved. Nothing has been uploaded.')}}function reject(id){clips=clips.filter(x=>x.id!==id);persist();toast('Clip removed from the queue.')}
 function openDB(){return new Promise((resolve,reject)=>{let r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(STORE);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)})}
 async function saveUpload(){let f=document.getElementById('videoFile').files[0];if(!f)return toast('Choose a video file first.');if(!f.type.startsWith('video/'))return toast('Choose a video file.');let id=crypto.randomUUID();try{let db=await openDB();await new Promise((res,rej)=>{let tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(f,id);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)});db.close();}catch(e){return toast('Could not save video in this browser. Try a smaller file.')}let cr=creators.find(c=>c.id===document.getElementById('videoCreator').value);clips.unshift({id,title:document.getElementById('videoTitle').value.trim()||f.name,creatorId:cr?.id||'',platform:cr?.platform||'Local upload',notes:document.getElementById('videoNotes').value.trim(),videoId:id,status:'Needs approval',size:f.size});persist();document.getElementById('videoFile').value='';document.getElementById('videoTitle').value='';document.getElementById('videoNotes').value='';showPage('queue');toast('Video added to your approval queue on this device.')}
